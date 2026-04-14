@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>お教室ゲーム数＋試合表（1人当たり表示版）</title>
+</head>
+<body>
+
+<h2>お教室ゲーム数計算＋試合表（1人当たり試合数表示）</h2>
+
+<p>試合数:</p>
+<input id="rounds" type="number" value="12">
+
+<p>各班人数:</p>
+<input id="class1" type="number" value="10">
+<input id="class2" type="number" value="10">
+<input id="class3" type="number" value="10">
+<input id="class4" type="number" value="10">
+<input id="class5" type="number" value="10">
+<input id="class6" type="number" value="10">
+
+<br><br>
+<button onclick="calculate()">生成</button>
+
+<div id="result"></div>
+
+<script>
+function calculate(){
+  const rounds = +document.getElementById('rounds').value;
+  const counts = [
+    +class1.value,+class2.value,+class3.value,
+    +class4.value,+class5.value,+class6.value
+  ];
+
+  const totalPlayers = counts.reduce((a,b)=>a+b,0);
+  const totalMatches = rounds * 6;
+
+  // --- 試合数配分（人数比例）
+  let floatMatches = counts.map(c=>c/totalPlayers*totalMatches);
+  let ideal = floatMatches.map(Math.floor);
+
+  let diff = totalMatches - ideal.reduce((a,b)=>a+b,0);
+  floatMatches
+    .map((v,i)=>({i,frac:v-Math.floor(v)}))
+    .sort((a,b)=>b.frac-a.frac)
+    .slice(0,diff)
+    .forEach(x=>ideal[x.i]++);
+
+  // --- 重複・休み計算
+  let rawDiff = ideal.map(m=>rounds-m);
+  let pos=[],neg=[];
+  for(let i=0;i<6;i++){
+    if(rawDiff[i]>0) pos.push({i,val:rawDiff[i]});
+    if(rawDiff[i]<0) neg.push({i,val:-rawDiff[i]});
+  }
+
+  let sumPos = pos.reduce((a,b)=>a+b.val,0);
+  let sumNeg = neg.reduce((a,b)=>a+b.val,0);
+  let target = Math.min(sumPos,sumNeg);
+
+  function allocate(arr,sum,target){
+    let tmp = arr.map(x=>{
+      let exact = x.val*target/sum;
+      return {i:x.i,floor:Math.floor(exact),frac:exact-Math.floor(exact)};
+    });
+    let res = Array(6).fill(0);
+    tmp.forEach(x=>res[x.i]=x.floor);
+    let remain = target - tmp.reduce((a,b)=>a+b.floor,0);
+    tmp.sort((a,b)=>b.frac-a.frac)
+      .forEach(x=>{
+        if(remain>0){res[x.i]++;remain--;}
+      });
+    return res;
+  }
+
+  let rest = allocate(pos,sumPos,target);
+  let dup = allocate(neg,sumNeg,target);
+
+  // --- 試合表生成（休み連続回避）
+  let schedule=[];
+  let restRemain=[...rest];
+  let dupRemain=[...dup];
+  let lastRest = -1;
+  let lastDup = -1;
+
+  for(let r=0;r<rounds;r++){
+    let row=[0,1,2,3,4,5];
+
+    // --- 休み選択（直前回避）
+    let restCandidates = restRemain
+      .map((v,i)=>({i,v}))
+      .filter(x=>x.v>0)
+      .sort((a,b)=>b.v-a.v);
+
+    if(restCandidates.length>0){
+      let restTeam = null;
+      for(let c of restCandidates){
+        if(c.i !== lastRest){
+          restTeam = c.i;
+          break;
+        }
+      }
+      if(restTeam===null) restTeam = restCandidates[0].i;
+
+      row[restTeam] = "休み";
+      restRemain[restTeam]--;
+      lastRest = restTeam;
+
+      // --- 重複班選択（直前回避）
+      let dupCandidates = dupRemain
+        .map((v,i)=>({i,v}))
+        .filter(x=>x.v>0)
+        .sort((a,b)=>b.v-a.v);
+
+      if(dupCandidates.length>0){
+        let dupTeam = null;
+        for(let c of dupCandidates){
+          if(c.i !== lastDup && c.i !== restTeam){
+            dupTeam = c.i;
+            break;
+          }
+        }
+        if(dupTeam===null) dupTeam = dupCandidates[0].i;
+
+        row[restTeam] = "班"+(dupTeam+1);
+        dupRemain[dupTeam]--;
+        lastDup = dupTeam;
+      }
+    }
+
+    schedule.push(row.map(x=>typeof x==="number"?"班"+(x+1):x));
+  }
+
+  // --- 表示
+  let html = `<h3>総人数: ${totalPlayers}</h3>`;
+  html += `<h3>総試合数: ${totalMatches}</h3>`;
+
+  html += '<table border="1"><tr><th>班</th><th>人数</th><th>割合</th><th>試合数</th><th>重複</th><th>休み</th><th>1人当たり試合数</th></tr>';
+  for(let i=0;i<6;i++){
+    let perPerson = (ideal[i]/counts[i]).toFixed(2);
+    html += `<tr>
+      <td>班${i+1}</td>
+      <td>${counts[i]}</td>
+      <td>${(counts[i]/totalPlayers*100).toFixed(1)}%</td>
+      <td>${ideal[i]}</td>
+      <td>${dup[i]}</td>
+      <td>${rest[i]}</td>
+      <td>${perPerson}</td>
+    </tr>`;
+  }
+  html += '</table>';
+
+  // --- 休み合計・重複合計
+  let totalRest = rest.reduce((a,b)=>a+b,0);
+  let totalDup = dup.reduce((a,b)=>a+b,0);
+  html += `<p>休み合計: ${totalRest} / 重複合計: ${totalDup}</p>`;
+
+  // --- 試合表
+  html += "<h3>試合表</h3>";
+  html += "<table border='1'>";
+  for(let r=0;r<rounds;r++){
+    html += "<tr><td>"+(r+1)+"回</td>";
+    for(let c=0;c<6;c++){
+      html += "<td>"+schedule[r][c]+"</td>";
+    }
+    html += "</tr>";
+  }
+  html += "</table>";
+
+  document.getElementById("result").innerHTML = html;
+}
+</script>
+
+</body>
+</html>
